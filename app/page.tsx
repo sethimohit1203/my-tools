@@ -16,7 +16,7 @@ const tools = [
     url: "/backlinks",
     icon: "🔗",
     color: "#10b981",
-    tag: "Coming soon",
+    tag: "Live",
   },
   {
     name: "SEO Audit",
