@@ -5,7 +5,7 @@ const tools = [
   {
     name: "WordPress AI Tool",
     desc: "Manage any WordPress site using natural language. Update posts, meta, Rank Math SEO — via Claude, GPT-4o or Gemini.",
-    url: "/wp-ai",
+    url: "/wp-api",
     icon: "🤖",
     color: "#6366f1",
     tag: "Live",
