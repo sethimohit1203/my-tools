@@ -33,11 +33,32 @@ type Config = {
   model: Model;
 };
 
+type SavedSite = {
+  name: string;
+  wpUrl: string;
+  wpUser: string;
+  wpPass: string;
+};
+
 const defaultConfig: Config = {
   wpUrl: "", wpUser: "", wpPass: "",
   claudeKey: "", oaiKey: "", gemKey: "", groqKey: "",
   model: "groq",
 };
+
+function getSavedSites(): SavedSite[] {
+  if (typeof window === "undefined") return [];
+  try { return JSON.parse(localStorage.getItem("wp-ai-sites") || "[]"); }
+  catch { return []; }
+}
+
+function saveSiteToStorage(site: SavedSite) {
+  const sites = getSavedSites();
+  const existing = sites.findIndex((s) => s.wpUrl === site.wpUrl);
+  if (existing >= 0) sites[existing] = site;
+  else sites.push(site);
+  localStorage.setItem("wp-ai-sites", JSON.stringify(sites));
+}
 
 const SYSTEM_PROMPT = `You are a WordPress REST API assistant. Convert natural language commands into WP REST API calls.
 
@@ -62,28 +83,28 @@ ENDPOINT REFERENCE — use exactly these:
 - Drafts: GET /wp-json/wp/v2/posts?status=draft&per_page=50&_fields=id,title,status
 - Categories: GET /wp-json/wp/v2/categories?per_page=50&_fields=id,name,count,link
 - Tags: GET /wp-json/wp/v2/tags?per_page=50&_fields=id,name,count
-- WooCommerce Products: GET /wp-json/wc/v3/products?per_page=50&consumer_key=CK&consumer_secret=CS
-- Update post: PUT /wp-json/wp/v2/posts/{id} with payload
+- Search posts: GET /wp-json/wp/v2/posts?search=TERM&_fields=id,title,status,link
+- Custom post type: GET /wp-json/wp/v2/{post-type}?per_page=50&_fields=id,title,status,link
+- Update post title: PUT /wp-json/wp/v2/posts/{id} payload: {"title":"new title"}
 - Update page: PUT /wp-json/wp/v2/pages/{id} with payload
+- Publish draft: PUT /wp-json/wp/v2/posts/{id} payload: {"status":"publish"}
 - Rank Math focus keyword: PUT /wp-json/wp/v2/posts/{id} payload: {"meta":{"rank_math_focus_keyword":"keyword"}}
 - Rank Math meta desc: PUT /wp-json/wp/v2/posts/{id} payload: {"meta":{"rank_math_description":"desc"}}
 - Rank Math title: PUT /wp-json/wp/v2/posts/{id} payload: {"meta":{"rank_math_title":"title"}}
-- Search posts: GET /wp-json/wp/v2/posts?search=TERM&_fields=id,title,status,link
-- Custom post type: GET /wp-json/wp/v2/{post-type}?per_page=50&_fields=id,title,status,link
+- WooCommerce Products: GET /wp-json/wc/v3/products?per_page=50
 
 RULES:
-- action = "read" for GET requests (executes automatically)
-- action = "write" for POST/PUT/DELETE (requires user confirmation)
-- Always include _fields in GET to limit response size
-- For products use per_page=50 or 100
+- action = "read" for GET (auto-executes)
+- action = "write" for POST/PUT/DELETE (needs confirmation)
+- Always include _fields in GET requests
 - NEVER add extra text after the JSON block
-- If WooCommerce keys are needed, ask user for consumer_key and consumer_secret`;
+- If command is unclear, ask for clarification`;
 
 const MODEL_CONFIG = {
-  claude: { label: "Claude", color: "#6366f1", free: false },
-  gpt:    { label: "GPT-4o", color: "#10a37f", free: false },
-  gemini: { label: "Gemini", color: "#4285f4", free: true },
-  groq:   { label: "Groq", color: "#f55036", free: true },
+  claude: { label: "Claude",    color: "#6366f1", free: false },
+  gpt:    { label: "GPT-4o",   color: "#10a37f", free: false },
+  gemini: { label: "Gemini",   color: "#4285f4", free: true  },
+  groq:   { label: "Groq",     color: "#f55036", free: true  },
 };
 
 const inputStyle: React.CSSProperties = {
@@ -93,7 +114,7 @@ const inputStyle: React.CSSProperties = {
   background: "#fff", color: "#111",
 };
 
-export default function WpAiPage() {
+export default function WpApiPage() {
   const [config, setConfig] = useState<Config>(() => {
     if (typeof window === "undefined") return defaultConfig;
     try {
@@ -112,6 +133,8 @@ export default function WpAiPage() {
     } catch { return false; }
   });
 
+  const [savedSites, setSavedSites] = useState<SavedSite[]>(() => getSavedSites());
+  const [showSitePicker, setShowSitePicker] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -151,19 +174,14 @@ export default function WpAiPage() {
   }
 
   async function callAI(userMsg: string): Promise<string> {
-    // GROQ — free, no key needed for basic use but key required
     if (config.model === "groq") {
-      if (!config.groqKey) throw new Error("Groq API key not set. Go to Settings and add your free key from console.groq.com");
+      if (!config.groqKey) throw new Error("Groq API key not set. Click ⚙ Settings and add your free key from console.groq.com");
       const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": "Bearer " + config.groqKey },
         body: JSON.stringify({
-          model: "llama-3.3-70b-versatile",
-          max_tokens: 1000,
-          messages: [
-            { role: "system", content: SYSTEM_PROMPT },
-            { role: "user", content: userMsg },
-          ],
+          model: "llama-3.3-70b-versatile", max_tokens: 1000,
+          messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: userMsg }],
         }),
       });
       const data = await res.json();
@@ -171,19 +189,13 @@ export default function WpAiPage() {
       return data.choices?.[0]?.message?.content || "No response.";
     }
 
-    // CLAUDE
     if (config.model === "claude") {
-      if (!config.claudeKey) throw new Error("Claude API key not set. Go to Settings and add your Anthropic key from console.anthropic.com");
+      if (!config.claudeKey) throw new Error("Claude API key not set. Click ⚙ Settings and add your key from console.anthropic.com");
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": config.claudeKey,
-          "anthropic-version": "2023-06-01",
-        },
+        headers: { "Content-Type": "application/json", "x-api-key": config.claudeKey, "anthropic-version": "2023-06-01" },
         body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: 1000,
+          model: "claude-sonnet-4-6", max_tokens: 1000,
           system: SYSTEM_PROMPT,
           messages: [{ role: "user", content: userMsg }],
         }),
@@ -193,18 +205,14 @@ export default function WpAiPage() {
       return data.content?.[0]?.text || "No response.";
     }
 
-    // GPT-4o
     if (config.model === "gpt") {
-      if (!config.oaiKey) throw new Error("OpenAI API key not set. Go to Settings and add your key from platform.openai.com");
+      if (!config.oaiKey) throw new Error("OpenAI API key not set. Click ⚙ Settings and add your key from platform.openai.com");
       const res = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": "Bearer " + config.oaiKey },
         body: JSON.stringify({
           model: "gpt-4o", max_tokens: 1000,
-          messages: [
-            { role: "system", content: SYSTEM_PROMPT },
-            { role: "user", content: userMsg },
-          ],
+          messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: userMsg }],
         }),
       });
       const data = await res.json();
@@ -212,9 +220,8 @@ export default function WpAiPage() {
       return data.choices?.[0]?.message?.content || "No response.";
     }
 
-    // GEMINI
     if (config.model === "gemini") {
-      if (!config.gemKey) throw new Error("Gemini API key not set. Go to Settings and add your key from aistudio.google.com");
+      if (!config.gemKey) throw new Error("Gemini API key not set. Click ⚙ Settings and add your key from aistudio.google.com");
       const res = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${config.gemKey}`,
         {
@@ -257,22 +264,15 @@ export default function WpAiPage() {
       if (data.length === 0) return "No results found.";
       return (data as Record<string, unknown>[])
         .map((p) => {
-          // Handle both WP posts (title.rendered) and WC products (name) and categories (name)
-          const title =
-            (p.title as { rendered?: string })?.rendered ||
-            String(p.name || p.title || "(no title)");
-          const id = p.id;
+          const title = (p.title as { rendered?: string })?.rendered || String(p.name || p.title || "(no title)");
           const status = p.status ? ` [${p.status}]` : "";
           const link = p.link || p.permalink || "";
           const price = p.price ? ` — ₹${p.price}` : "";
-          return `#${id} — ${title}${status}${price}${link ? "\n   " + link : ""}`;
-        })
-        .join("\n\n");
+          return `#${p.id} — ${title}${status}${price}${link ? "\n   " + link : ""}`;
+        }).join("\n\n");
     }
     const d = data as Record<string, unknown>;
-    const title =
-      (d.title as { rendered?: string })?.rendered ||
-      String(d.name || d.title || "");
+    const title = (d.title as { rendered?: string })?.rendered || String(d.name || d.title || "");
     return `✅ Done${title ? ": " + title : ""}${d.link ? "\n🔗 " + d.link : ""}`;
   }
 
@@ -309,7 +309,6 @@ export default function WpAiPage() {
     } catch (e) {
       addMessage({ role: "assistant", text: `❌ ${String(e)}` });
     }
-
     setLoading(false);
   }
 
@@ -336,6 +335,8 @@ export default function WpAiPage() {
     "List all categories",
   ];
 
+  const domainLabel = config.wpUrl.replace(/https?:\/\//, "").split("/")[0] || "No site";
+
   // ── CONNECT SCREEN ──────────────────────────────────────────────
   if (!connected) {
     return (
@@ -344,10 +345,31 @@ export default function WpAiPage() {
           ← Back to dashboard
         </Link>
         <h1 style={{ fontSize: 26, fontWeight: 700, marginBottom: 6 }}>WordPress AI Tool</h1>
-        <p style={{ fontSize: 14, color: "#6b7280", marginBottom: 32 }}>Connect your site and manage it using natural language.</p>
+        <p style={{ fontSize: 14, color: "#6b7280", marginBottom: 24 }}>Connect your site and manage it using natural language.</p>
+
+        {/* Saved sites quick connect */}
+        {savedSites.length > 0 && (
+          <div style={{ background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 12, padding: 16, marginBottom: 20 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "#166534", marginBottom: 10 }}>⚡ Quick connect — saved sites</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {savedSites.map((site) => (
+                <button key={site.wpUrl}
+                  onClick={() => {
+                    setConfig((c) => ({ ...c, wpUrl: site.wpUrl, wpUser: site.wpUser, wpPass: site.wpPass }));
+                    setConnected(true);
+                  }}
+                  style={{ padding: "8px 14px", background: "#fff", border: "1px solid #86efac", borderRadius: 8, fontSize: 13, cursor: "pointer", textAlign: "left", color: "#111", fontWeight: 500 }}>
+                  {site.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 12, padding: 24, marginBottom: 16 }}>
-          <h2 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16, color: "#374151" }}>WordPress Connection</h2>
+          <h2 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16, color: "#374151" }}>
+            {savedSites.length > 0 ? "Connect a new site" : "WordPress Connection"}
+          </h2>
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <div>
               <label style={{ fontSize: 12, color: "#6b7280", display: "block", marginBottom: 4 }}>Site URL</label>
@@ -376,32 +398,26 @@ export default function WpAiPage() {
             <span style={{ background: "#fef3c7", color: "#92400e", padding: "2px 8px", borderRadius: 4, fontWeight: 600, fontSize: 11 }}>FREE</span>
             {" "}Groq is free — get key at console.groq.com. Gemini free tier resets daily.
           </p>
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <div>
-                <label style={{ fontSize: 12, color: "#6b7280", display: "block", marginBottom: 4 }}>
-                  Groq Key <span style={{ color: "#16a34a", fontWeight: 600 }}>(free)</span>
-                </label>
-                <input style={inputStyle} type="password" placeholder="gsk_..." value={config.groqKey}
-                  onChange={(e) => setConfig((c) => ({ ...c, groqKey: e.target.value }))} />
-              </div>
-              <div>
-                <label style={{ fontSize: 12, color: "#6b7280", display: "block", marginBottom: 4 }}>
-                  Gemini Key <span style={{ color: "#16a34a", fontWeight: 600 }}>(free tier)</span>
-                </label>
-                <input style={inputStyle} type="password" placeholder="AIza..." value={config.gemKey}
-                  onChange={(e) => setConfig((c) => ({ ...c, gemKey: e.target.value }))} />
-              </div>
-              <div>
-                <label style={{ fontSize: 12, color: "#6b7280", display: "block", marginBottom: 4 }}>Anthropic Key (Claude)</label>
-                <input style={inputStyle} type="password" placeholder="sk-ant-..." value={config.claudeKey}
-                  onChange={(e) => setConfig((c) => ({ ...c, claudeKey: e.target.value }))} />
-              </div>
-              <div>
-                <label style={{ fontSize: 12, color: "#6b7280", display: "block", marginBottom: 4 }}>OpenAI Key (GPT-4o)</label>
-                <input style={inputStyle} type="password" placeholder="sk-..." value={config.oaiKey}
-                  onChange={(e) => setConfig((c) => ({ ...c, oaiKey: e.target.value }))} />
-              </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div>
+              <label style={{ fontSize: 12, color: "#6b7280", display: "block", marginBottom: 4 }}>Groq Key <span style={{ color: "#16a34a", fontWeight: 600 }}>(free)</span></label>
+              <input style={inputStyle} type="password" placeholder="gsk_..." value={config.groqKey}
+                onChange={(e) => setConfig((c) => ({ ...c, groqKey: e.target.value }))} />
+            </div>
+            <div>
+              <label style={{ fontSize: 12, color: "#6b7280", display: "block", marginBottom: 4 }}>Gemini Key <span style={{ color: "#16a34a", fontWeight: 600 }}>(free tier)</span></label>
+              <input style={inputStyle} type="password" placeholder="AIza..." value={config.gemKey}
+                onChange={(e) => setConfig((c) => ({ ...c, gemKey: e.target.value }))} />
+            </div>
+            <div>
+              <label style={{ fontSize: 12, color: "#6b7280", display: "block", marginBottom: 4 }}>Anthropic Key (Claude)</label>
+              <input style={inputStyle} type="password" placeholder="sk-ant-..." value={config.claudeKey}
+                onChange={(e) => setConfig((c) => ({ ...c, claudeKey: e.target.value }))} />
+            </div>
+            <div>
+              <label style={{ fontSize: 12, color: "#6b7280", display: "block", marginBottom: 4 }}>OpenAI Key (GPT-4o)</label>
+              <input style={inputStyle} type="password" placeholder="sk-..." value={config.oaiKey}
+                onChange={(e) => setConfig((c) => ({ ...c, oaiKey: e.target.value }))} />
             </div>
           </div>
         </div>
@@ -412,6 +428,12 @@ export default function WpAiPage() {
               alert("Please fill in WordPress URL, username and application password.");
               return;
             }
+            const site: SavedSite = {
+              name: config.wpUrl.replace(/https?:\/\//, "").split("/")[0],
+              wpUrl: config.wpUrl, wpUser: config.wpUser, wpPass: config.wpPass,
+            };
+            saveSiteToStorage(site);
+            setSavedSites(getSavedSites());
             setConnected(true);
           }}
           style={{ width: "100%", padding: "12px", background: "#6366f1", color: "#fff", border: "none", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: "pointer" }}
@@ -425,20 +447,52 @@ export default function WpAiPage() {
   // ── MAIN TOOL SCREEN ────────────────────────────────────────────
   return (
     <main style={{ maxWidth: 760, margin: "0 auto", padding: "32px 24px" }}>
+
+      {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <Link href="/" style={{ fontSize: 13, color: "#6b7280", textDecoration: "none" }}>← Back</Link>
           <h1 style={{ fontSize: 20, fontWeight: 700 }}>WordPress AI Tool</h1>
-          <span style={{ fontSize: 11, padding: "2px 10px", background: "#dcfce7", color: "#16a34a", borderRadius: 20, fontWeight: 600 }}>
-            {config.wpUrl.replace(/https?:\/\//, "").split("/")[0]}
-          </span>
+
+          {/* Site switcher dropdown */}
+          <div style={{ position: "relative" }}>
+            <button onClick={() => setShowSitePicker((s) => !s)}
+              style={{ fontSize: 11, padding: "3px 10px", background: "#dcfce7", color: "#16a34a", border: "1px solid #86efac", borderRadius: 20, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+              {domainLabel} ▾
+            </button>
+            {showSitePicker && (
+              <div style={{ position: "absolute", top: "110%", left: 0, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, padding: 8, zIndex: 100, minWidth: 200, boxShadow: "0 4px 20px rgba(0,0,0,0.1)" }}>
+                <div style={{ fontSize: 11, color: "#9ca3af", padding: "4px 8px", marginBottom: 4 }}>Saved sites</div>
+                {savedSites.map((site) => (
+                  <button key={site.wpUrl}
+                    onClick={() => {
+                      setConfig((c) => ({ ...c, wpUrl: site.wpUrl, wpUser: site.wpUser, wpPass: site.wpPass }));
+                      setMessages([]);
+                      setShowSitePicker(false);
+                    }}
+                    style={{ display: "block", width: "100%", textAlign: "left", padding: "7px 10px", background: site.wpUrl === config.wpUrl ? "#f0fdf4" : "transparent", border: "none", borderRadius: 6, fontSize: 13, cursor: "pointer", color: "#111" }}>
+                    {site.name} {site.wpUrl === config.wpUrl && <span style={{ color: "#16a34a" }}>✓</span>}
+                  </button>
+                ))}
+                <div style={{ borderTop: "1px solid #f3f4f6", marginTop: 6, paddingTop: 6 }}>
+                  <button
+                    onClick={() => { setConnected(false); setShowSitePicker(false); setMessages([]); }}
+                    style={{ display: "block", width: "100%", textAlign: "left", padding: "7px 10px", background: "transparent", border: "none", borderRadius: 6, fontSize: 13, cursor: "pointer", color: "#6366f1", fontWeight: 500 }}>
+                    + Add new site
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
+
         <button onClick={() => setShowSettings((s) => !s)}
           style={{ fontSize: 12, padding: "6px 14px", border: "1px solid #e5e7eb", borderRadius: 8, background: "#fff", cursor: "pointer", color: "#374151" }}>
           ⚙ Settings
         </button>
       </div>
 
+      {/* Settings panel */}
       {showSettings && (
         <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 12, padding: 20, marginBottom: 20 }}>
           <h3 style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>WordPress Connection</h3>
@@ -463,7 +517,7 @@ export default function WpAiPage() {
               <input style={inputStyle} type="password" placeholder="gsk_..." value={config.groqKey} onChange={(e) => setConfig((c) => ({ ...c, groqKey: e.target.value }))} />
             </div>
             <div>
-              <label style={{ fontSize: 11, color: "#6b7280", display: "block", marginBottom: 3 }}>Gemini (free tier) — aistudio.google.com</label>
+              <label style={{ fontSize: 11, color: "#6b7280", display: "block", marginBottom: 3 }}>Gemini (free tier)</label>
               <input style={inputStyle} type="password" placeholder="AIza..." value={config.gemKey} onChange={(e) => setConfig((c) => ({ ...c, gemKey: e.target.value }))} />
             </div>
             <div>
@@ -475,7 +529,12 @@ export default function WpAiPage() {
               <input style={inputStyle} type="password" placeholder="sk-..." value={config.oaiKey} onChange={(e) => setConfig((c) => ({ ...c, oaiKey: e.target.value }))} />
             </div>
           </div>
-          <button onClick={() => setShowSettings(false)}
+          <button onClick={() => {
+            const site: SavedSite = { name: domainLabel, wpUrl: config.wpUrl, wpUser: config.wpUser, wpPass: config.wpPass };
+            saveSiteToStorage(site);
+            setSavedSites(getSavedSites());
+            setShowSettings(false);
+          }}
             style={{ marginTop: 14, fontSize: 12, padding: "6px 16px", background: "#6366f1", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}>
             Save & Close
           </button>
@@ -489,13 +548,7 @@ export default function WpAiPage() {
           const active = config.model === m;
           return (
             <button key={m} onClick={() => setConfig((c) => ({ ...c, model: m }))}
-              style={{
-                padding: "7px 16px", borderRadius: 20, fontSize: 13, fontWeight: 500, cursor: "pointer",
-                border: active ? `2px solid ${mc.color}` : "1px solid #e5e7eb",
-                background: active ? mc.color + "15" : "#fff",
-                color: active ? mc.color : "#6b7280",
-                display: "flex", alignItems: "center", gap: 6,
-              }}>
+              style={{ padding: "7px 16px", borderRadius: 20, fontSize: 13, fontWeight: 500, cursor: "pointer", border: active ? `2px solid ${mc.color}` : "1px solid #e5e7eb", background: active ? mc.color + "15" : "#fff", color: active ? mc.color : "#6b7280", display: "flex", alignItems: "center", gap: 6 }}>
               {mc.label}
               {mc.free && <span style={{ fontSize: 10, background: "#dcfce7", color: "#16a34a", padding: "1px 5px", borderRadius: 4, fontWeight: 700 }}>FREE</span>}
             </button>
@@ -515,26 +568,18 @@ export default function WpAiPage() {
 
       {/* Chat area */}
       <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 12, display: "flex", flexDirection: "column" }}>
-        <div style={{ flex: 1, padding: 20, display: "flex", flexDirection: "column", gap: 16, overflowY: "auto", minHeight: 380, maxHeight: 500 }}>
+        <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 16, overflowY: "auto", minHeight: 380, maxHeight: 500 }}>
           {messages.length === 0 && (
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "#9ca3af", fontSize: 14, gap: 8, padding: "80px 0", textAlign: "center" }}>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "#9ca3af", fontSize: 14, gap: 8, padding: "80px 0", textAlign: "center" }}>
               <span style={{ fontSize: 36 }}>🤖</span>
-              <span>Connected to {config.wpUrl.replace(/https?:\/\//, "").split("/")[0]}</span>
+              <span>Connected to {domainLabel}</span>
               <span style={{ fontSize: 12 }}>Type a command or click a quick prompt above</span>
             </div>
           )}
 
           {messages.map((msg) => (
             <div key={msg.id} style={{ display: "flex", flexDirection: "column", alignItems: msg.role === "user" ? "flex-end" : "flex-start", gap: 8 }}>
-              <div style={{
-                padding: "10px 14px", borderRadius: 12, fontSize: 13, lineHeight: 1.6, maxWidth: "88%",
-                background: msg.role === "user" ? MODEL_CONFIG[config.model].color : "#f9fafb",
-                color: msg.role === "user" ? "#fff" : "#111",
-                border: msg.role === "assistant" ? "1px solid #e5e7eb" : "none",
-                borderBottomRightRadius: msg.role === "user" ? 4 : 12,
-                borderBottomLeftRadius: msg.role === "assistant" ? 4 : 12,
-                whiteSpace: "pre-wrap",
-              }}>
+              <div style={{ padding: "10px 14px", borderRadius: 12, fontSize: 13, lineHeight: 1.6, maxWidth: "88%", background: msg.role === "user" ? MODEL_CONFIG[config.model].color : "#f9fafb", color: msg.role === "user" ? "#fff" : "#111", border: msg.role === "assistant" ? "1px solid #e5e7eb" : "none", borderBottomRightRadius: msg.role === "user" ? 4 : 12, borderBottomLeftRadius: msg.role === "assistant" ? 4 : 12, whiteSpace: "pre-wrap" }}>
                 {msg.text}
               </div>
 
@@ -560,13 +605,9 @@ export default function WpAiPage() {
               {msg.actionState === "confirmed" && !msg.actionResult && msg.action?.action === "write" && (
                 <div style={{ fontSize: 12, color: "#6b7280", padding: "4px 14px" }}>Executing…</div>
               )}
+
               {msg.actionResult && (
-                <div style={{
-                  padding: "10px 14px", borderRadius: 8, fontSize: 12, maxWidth: "88%", whiteSpace: "pre-wrap", fontFamily: "monospace",
-                  background: msg.actionState === "done" ? "#f0fdf4" : "#fef2f2",
-                  border: `1px solid ${msg.actionState === "done" ? "#86efac" : "#fca5a5"}`,
-                  color: msg.actionState === "done" ? "#166534" : "#991b1b",
-                }}>
+                <div style={{ padding: "10px 14px", borderRadius: 8, fontSize: 12, maxWidth: "88%", whiteSpace: "pre-wrap", fontFamily: "monospace", background: msg.actionState === "done" ? "#f0fdf4" : "#fef2f2", border: `1px solid ${msg.actionState === "done" ? "#86efac" : "#fca5a5"}`, color: msg.actionState === "done" ? "#166534" : "#991b1b" }}>
                   {msg.actionResult}
                 </div>
               )}
@@ -581,10 +622,7 @@ export default function WpAiPage() {
             <div style={{ display: "flex" }}>
               <div style={{ background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 12, borderBottomLeftRadius: 4, padding: "12px 16px", display: "flex", gap: 5 }}>
                 {[0, 1, 2].map((i) => (
-                  <span key={i} style={{
-                    width: 7, height: 7, borderRadius: "50%", background: "#9ca3af", display: "inline-block",
-                    animation: "blink 1.2s infinite", animationDelay: `${i * 0.2}s`,
-                  }} />
+                  <span key={i} style={{ width: 7, height: 7, borderRadius: "50%", background: "#9ca3af", display: "inline-block", animation: "blink 1.2s infinite", animationDelay: `${i * 0.2}s` }} />
                 ))}
               </div>
             </div>
@@ -593,19 +631,12 @@ export default function WpAiPage() {
         </div>
 
         <div style={{ borderTop: "1px solid #e5e7eb", padding: 12, display: "flex", gap: 8, background: "#f9fafb", borderRadius: "0 0 12px 12px" }}>
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
+          <textarea value={input} onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-            placeholder='e.g. "List all published posts" or "Update title of post 45 to Delhi Airport Cab" or "Set focus keyword of post 88 to luxury cab delhi"'
-            style={{ flex: 1, resize: "none", height: 64, padding: "10px 12px", border: "1px solid #e5e7eb", borderRadius: 8, fontSize: 13, fontFamily: "inherit", background: "#fff", color: "#111" }}
-          />
+            placeholder='e.g. "List all published posts" or "Update title of post 45" or "Set focus keyword of post 88 to luxury cab delhi"'
+            style={{ flex: 1, resize: "none", height: 64, padding: "10px 12px", border: "1px solid #e5e7eb", borderRadius: 8, fontSize: 13, fontFamily: "inherit", background: "#fff", color: "#111" }} />
           <button onClick={handleSend} disabled={loading || !input.trim()}
-            style={{
-              padding: "0 24px", background: MODEL_CONFIG[config.model].color, color: "#fff",
-              border: "none", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: "pointer",
-              opacity: loading || !input.trim() ? 0.5 : 1,
-            }}>
+            style={{ padding: "0 24px", background: MODEL_CONFIG[config.model].color, color: "#fff", border: "none", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: "pointer", opacity: loading || !input.trim() ? 0.5 : 1 }}>
             Send
           </button>
         </div>
