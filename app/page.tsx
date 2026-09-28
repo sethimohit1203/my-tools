@@ -19,6 +19,14 @@ const tools = [
     tag: "Live",
   },
   {
+    name: "Google Maps Extractor",
+    desc: "Extract business data (name, address, phone, website, rating) via the official Google Places API and export to CSV.",
+    url: "/gmaps",
+    icon: "🗺️",
+    color: "#0ea5e9",
+    tag: "Live",
+  },
+  {
     name: "SEO Audit",
     desc: "Audit any page for on-page SEO issues, missing meta, thin content.",
     url: "/seo-audit",
