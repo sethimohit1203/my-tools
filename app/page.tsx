@@ -19,8 +19,8 @@ const tools = [
     tag: "Live",
   },
   {
-    name: "Google Maps Extractor",
-    desc: "Extract business data (name, address, phone, website, rating) via the official Google Places API and export to CSV.",
+    name: "Maps Business Extractor",
+    desc: "Extract business data — name, address, phone, website, rating — for free via OpenStreetMap, or via the official Google Places API. Export to CSV.",
     url: "/gmaps",
     icon: "🗺️",
     color: "#0ea5e9",
