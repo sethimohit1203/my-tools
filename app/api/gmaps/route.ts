@@ -19,11 +19,12 @@ const FIELD_MASK = [
   "places.types",
   "places.currentOpeningHours.openNow",
   "places.googleMapsUri",
+  "places.primaryTypeDisplayName",
   "nextPageToken",
 ].join(",");
 
 type SearchBody = {
-  apiKey: string;
+  apiKey?: string;
   query: string;
   pageToken?: string;
   latitude?: number;
@@ -39,9 +40,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { apiKey, query, pageToken, latitude, longitude, radiusMeters } = body;
+  const { query, pageToken, latitude, longitude, radiusMeters } = body;
+  const apiKey = body.apiKey || process.env.GOOGLE_PLACES_API_KEY;
 
-  if (!apiKey) return NextResponse.json({ error: "Missing Google Places API key" }, { status: 400 });
+  if (!apiKey) return NextResponse.json({ error: "Missing Google Places API key — add it in ⚙ Settings or set GOOGLE_PLACES_API_KEY" }, { status: 400 });
   if (!query && !pageToken) return NextResponse.json({ error: "Missing search query" }, { status: 400 });
 
   const payload: Record<string, unknown> = {

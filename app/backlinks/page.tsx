@@ -191,12 +191,15 @@ export default function BacklinksPage() {
         googleToken: site.googleToken || "",
         bloggerBlogId: site.bloggerBlogId || "",
       };
-      const res = await fetch(site.webhookUrl, {
+      // Sent via our server so n8n doesn't need CORS enabled.
+      const res = await fetch("/api/http", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ url: site.webhookUrl, method: "POST", body: payload }),
       });
-      const data = await res.json();
+      const proxied = await res.json();
+      if (!res.ok || proxied.error || !proxied.ok) throw new Error(proxied.error || `n8n returned HTTP ${proxied.status}`);
+      const data = (typeof proxied.data === "object" && proxied.data) || {};
       setAutomateLog((prev) => [...prev, `✅ n8n received ${data.count || pendingLinks.length} links for ${data.site || site.name}`, `Workflow is now processing...`, `Check your n8n dashboard for execution details.`]);
       // Mark all sent links as submitted
       const updatedLinks = links.map((l) =>
@@ -207,7 +210,7 @@ export default function BacklinksPage() {
       persist(sites, updatedLinks);
       setAutomateLog((prev) => [...prev, `✅ ${pendingLinks.length} links marked as Submitted in tracker.`]);
     } catch (e) {
-      setAutomateLog((prev) => [...prev, `❌ Error: ${String(e)}`, "Check that your n8n webhook is active and CORS is enabled."]);
+      setAutomateLog((prev) => [...prev, `❌ Error: ${String(e)}`, "Check that your n8n workflow is active and the webhook URL is correct."]);
     }
     setAutomating(false);
   }
