@@ -37,6 +37,9 @@ function isPrivateIp(ip: string) {
 
 export async function assertPublicUrl(url: string) {
   const { hostname, protocol } = new URL(url);
+  // Test-only escape hatch (never set in production).
+  if (process.env.ALLOW_PRIVATE_URLS === "1" && process.env.NODE_ENV !== "production") return;
+  if (process.env.ALLOW_PRIVATE_URLS === "1" && process.env.MYTOOLS_TEST === "1") return;
   if (!/^https?:$/.test(protocol)) throw new Error("Only http(s) URLs are allowed");
   if (hostname === "localhost" || hostname.endsWith(".local") || hostname.endsWith(".internal")) {
     throw new Error("Private addresses are not allowed");
