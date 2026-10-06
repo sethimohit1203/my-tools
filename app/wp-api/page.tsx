@@ -173,90 +173,34 @@ export default function WpApiPage() {
     return text.replace(/```json[\s\S]*?```/g, "").trim();
   }
 
+  // AI calls go through our server (/api/ai): browsers can't call Anthropic/OpenAI
+  // directly because of CORS, and keys can also come from Vercel env vars.
   async function callAI(userMsg: string): Promise<string> {
-    if (config.model === "groq") {
-      if (!config.groqKey) throw new Error("Groq API key not set. Click ⚙ Settings and add your free key from console.groq.com");
-      const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + config.groqKey },
-        body: JSON.stringify({
-          model: "llama-3.3-70b-versatile", max_tokens: 1000,
-          messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: userMsg }],
-        }),
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error.message);
-      return data.choices?.[0]?.message?.content || "No response.";
-    }
-
-    if (config.model === "claude") {
-      if (!config.claudeKey) throw new Error("Claude API key not set. Click ⚙ Settings and add your key from console.anthropic.com");
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": config.claudeKey, "anthropic-version": "2023-06-01" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-6", max_tokens: 1000,
-          system: SYSTEM_PROMPT,
-          messages: [{ role: "user", content: userMsg }],
-        }),
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error.message);
-      return data.content?.[0]?.text || "No response.";
-    }
-
-    if (config.model === "gpt") {
-      if (!config.oaiKey) throw new Error("OpenAI API key not set. Click ⚙ Settings and add your key from platform.openai.com");
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + config.oaiKey },
-        body: JSON.stringify({
-          model: "gpt-4o", max_tokens: 1000,
-          messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: userMsg }],
-        }),
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error.message);
-      return data.choices?.[0]?.message?.content || "No response.";
-    }
-
-    if (config.model === "gemini") {
-      if (!config.gemKey) throw new Error("Gemini API key not set. Click ⚙ Settings and add your key from aistudio.google.com");
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${config.gemKey}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
-            contents: [{ parts: [{ text: userMsg }] }],
-          }),
-        }
-      );
-      const data = await res.json();
-      if (data.error) throw new Error(data.error.message);
-      return data.candidates?.[0]?.content?.parts?.[0]?.text || "No response.";
-    }
-
-    throw new Error("Unknown model selected");
+    const keys = { claude: config.claudeKey, gpt: config.oaiKey, gemini: config.gemKey, groq: config.groqKey };
+    const res = await fetch("/api/ai", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: config.model, apiKey: keys[config.model], system: SYSTEM_PROMPT, prompt: userMsg, maxTokens: 1500 }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || `AI request failed (${res.status})`);
+    return data.text || "No response.";
   }
 
+  // WordPress calls are proxied through /api/wp so they work even when the
+  // site doesn't send CORS headers (most don't).
   async function executeWP(action: WPAction) {
-    const auth = btoa(config.wpUser + ":" + config.wpPass);
-    let url = config.wpUrl.replace(/\/$/, "") + action.endpoint;
-    if (action.queryParams && Object.keys(action.queryParams).length > 0) {
-      url += "?" + new URLSearchParams(action.queryParams).toString();
-    }
-    const opts: RequestInit = {
-      method: action.method,
-      headers: { Authorization: "Basic " + auth, "Content-Type": "application/json" },
-    };
-    if (action.payload && Object.keys(action.payload).length > 0 && action.method !== "GET") {
-      opts.body = JSON.stringify(action.payload);
-    }
-    const res = await fetch(url, opts);
-    const data = await res.json();
-    return { ok: res.ok, status: res.status, data };
+    const res = await fetch("/api/wp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        wpUrl: config.wpUrl, wpUser: config.wpUser, wpPass: config.wpPass,
+        method: action.method, endpoint: action.endpoint, query: action.queryParams,
+        payload: action.method !== "GET" && action.payload && Object.keys(action.payload).length ? action.payload : undefined,
+      }),
+    });
+    const body = await res.json();
+    return { ok: res.ok && !body.error, status: res.status, data: body.error ? { message: body.error } : body.data };
   }
 
   function formatResult(data: unknown): string {
