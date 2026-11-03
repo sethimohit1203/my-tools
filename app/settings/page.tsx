@@ -69,6 +69,7 @@ export default function SettingsPage() {
         <div className="tk-grid">
           <Field label="Apps Script web app URL (write to Sheets)" hint="Set it up in 2 minutes from the Sheets Automation tool.">{input("sheetsWebhook", "https://script.google.com/macros/s/…/exec")}</Field>
           <Field label="Social publishing webhook (n8n / Make / Buffer)" hint="Used by Social Media Automation to publish posts.">{input("socialWebhook", "https://…")}</Field>
+          <Field label="Shorts render webhook (n8n / Make)" hint="Used by Horror Shorts Studio to send voice-over, captions and scene prompts for rendering.">{input("shortsWebhook", "https://…")}</Field>
         </div>
       </Card>
 

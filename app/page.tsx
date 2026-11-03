@@ -41,6 +41,7 @@ const SECTIONS: { title: string; sub: string; tools: Tool[] }[] = [
       { name: "AI Auto-Processor", desc: "Upload a CSV (e.g. 500 businesses) → AI fills new columns for every row (category, lead score, service…) → download.", url: "/ai-processor", icon: "🧠", color: "#2563eb" },
       { name: "Email Automation", desc: "Personalized emails from lead data, follow-up sequences after X days and status tracking.", url: "/outreach?ch=email", icon: "📧", color: "#ea580c" },
       { name: "WhatsApp Automation", desc: "Personalized WhatsApp messages via the official Cloud API (or one-click wa.me), follow-up sequences, status tracking.", url: "/outreach?ch=whatsapp", icon: "💬", color: "#22c55e" },
+      { name: "Horror Shorts Studio", desc: "Hindi/Hinglish horror-suspense animated Shorts: viral ideas → script → scene prompts → voice-over, SRT captions → render webhook.", url: "/shorts", icon: "👻", color: "#7f1d1d" },
       { name: "Social Media Automation", desc: "Content calendar → AI captions & hashtags → publish via webhook (n8n/Make/Buffer) → track status.", url: "/social", icon: "📱", color: "#e11d48" },
       { name: "WordPress Automation", desc: "Bulk create/update posts, meta, schema, featured images and scheduled publishing.", url: "/wp-automation", icon: "🌐", color: "#3b82f6" },
       { name: "Website / SEO Monitor", desc: "Watch your and competitors' sites: downtime, title/meta/H1 changes, content changes, new sitemap pages.", url: "/monitor", icon: "🔔", color: "#dc2626" },
