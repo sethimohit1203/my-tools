@@ -1,0 +1,206 @@
+{
+  "name": "Horror Shorts - render and upload",
+  "nodes": [
+    {
+      "id": "n1",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "shorts-render-CHANGE-THIS-TO-A-LONG-RANDOM-STRING",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "webhookId": "00000000-0000-4000-8000-000000000001"
+    },
+    {
+      "id": "n2",
+      "name": "Prepare",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const b = $json.body || $json;\nconst id = String(b.id || Date.now()).replace(/[^A-Za-z0-9_-]/g, '');\nif (!id || !b.voiceover) throw new Error('Payload missing id/voiceover - send it from the Horror Shorts Studio.');\nconst hashtags = b.hashtags || '';\nreturn [{ json: {\n  id,\n  dir: '/data/shorts/jobs/' + id,\n  title: String(b.title || 'Horror Short').slice(0, 95),\n  description: ((b.description || '') + '\\n\\n' + hashtags + '\\n#Shorts').slice(0, 4900),\n  tags: (hashtags.match(/#[^\\s#]+/g) || []).map(t => t.slice(1)).slice(0, 15).join(','),\n  voiceover: b.voiceover,\n  srt: b.captionsSrt || ''\n}}];"
+      }
+    },
+    {
+      "id": "n3",
+      "name": "Gemini TTS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  contents: [{ parts: [{ text: 'Narrate this in Hindi/Hinglish as a slow, eerie, low whispering horror storyteller. Pause before reveals: ' + $json.voiceover }] }],\n  generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Charon' } } } }\n}) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Gemini API key (header x-goog-api-key)"
+        }
+      }
+    },
+    {
+      "id": "n4",
+      "name": "Write voice + captions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst p = $('Prepare').first().json;\nconst part = (($json.candidates || [])[0] || {}).content?.parts?.[0]?.inlineData;\nif (!part || !part.data) throw new Error('Gemini TTS returned no audio: ' + JSON.stringify($json).slice(0, 300));\nfs.mkdirSync(p.dir, { recursive: true });\nfs.writeFileSync(p.dir + '/voice.pcm', Buffer.from(part.data, 'base64'));\nfs.writeFileSync(p.dir + '/captions.srt', p.srt);\nreturn [{ json: p }];"
+      }
+    },
+    {
+      "id": "n5",
+      "name": "FFmpeg render",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "command": "=bash /data/shorts/render.sh {{ $json.id }}"
+      }
+    },
+    {
+      "id": "n6",
+      "name": "Read final.mp4",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "operation": "read",
+        "fileSelector": "={{ $('Prepare').first().json.dir }}/final.mp4",
+        "options": {}
+      }
+    },
+    {
+      "id": "n7",
+      "name": "Upload to YouTube",
+      "type": "n8n-nodes-base.youTube",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "resource": "video",
+        "operation": "upload",
+        "title": "={{ $('Prepare').first().json.title }}",
+        "regionCode": "IN",
+        "categoryId": "24",
+        "binaryProperty": "data",
+        "options": {
+          "description": "={{ $('Prepare').first().json.description }}",
+          "tags": "={{ $('Prepare').first().json.tags }}",
+          "privacyStatus": "private",
+          "defaultLanguage": "hi",
+          "selfDeclaredMadeForKids": false
+        }
+      },
+      "credentials": {
+        "youTubeOAuth2Api": {
+          "id": "",
+          "name": "YouTube account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Prepare",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare": {
+      "main": [
+        [
+          {
+            "node": "Gemini TTS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini TTS": {
+      "main": [
+        [
+          {
+            "node": "Write voice + captions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write voice + captions": {
+      "main": [
+        [
+          {
+            "node": "FFmpeg render",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FFmpeg render": {
+      "main": [
+        [
+          {
+            "node": "Read final.mp4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read final.mp4": {
+      "main": [
+        [
+          {
+            "node": "Upload to YouTube",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

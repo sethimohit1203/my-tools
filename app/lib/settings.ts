@@ -17,6 +17,7 @@ export type Settings = {
   waPhoneId: string;
   sheetsWebhook: string;
   socialWebhook: string;
+  shortsWebhook: string;
   wpUrl: string;
   wpUser: string;
   wpPass: string;
@@ -29,7 +30,7 @@ export type Settings = {
 export const DEFAULT_SETTINGS: Settings = {
   aiProvider: "groq", claudeKey: "", oaiKey: "", gemKey: "", groqKey: "",
   googlePlacesKey: "", resendKey: "", emailFrom: "", waToken: "", waPhoneId: "",
-  sheetsWebhook: "", socialWebhook: "", wpUrl: "", wpUser: "", wpPass: "",
+  sheetsWebhook: "", socialWebhook: "", shortsWebhook: "", wpUrl: "", wpUser: "", wpPass: "",
   agencyName: "Designoia", agencyPhone: "", agencyEmail: "", agencyWebsite: "",
 };
 
