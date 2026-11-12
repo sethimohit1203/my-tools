@@ -1,0 +1,15 @@
+services:
+  n8n:
+    build: .
+    ports: ["5678:5678"]
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - NODES_EXCLUDE=[]                    # re-enable Execute Command node (disabled by default in newer n8n)
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false  # allow $env in expressions
+      - N8N_RESTRICT_FILE_ACCESS_TO=/data/shorts
+      - GENERIC_TIMEZONE=Asia/Kolkata
+      - EXECUTIONS_TIMEOUT=1800
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - shorts_data:/data/shorts
+volumes: { n8n_data: {}, shorts_data: {} }
