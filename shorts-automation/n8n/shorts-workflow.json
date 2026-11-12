@@ -1,0 +1,257 @@
+{
+  "name": "Free YouTube Shorts Animation Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 10
+            }
+          ]
+        }
+      },
+      "id": "c7940118-ab7b-403d-9ca6-1c51254bd227",
+      "name": "Every day 10AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===== EDIT THESE =====\nconst cfg = {\n  niche: 'short moral stories for kids',\n  language: 'Hindi',                       // Hindi or English\n  voice: 'hi-IN-SwaraNeural',              // en-US-AriaNeural for English\n  style: 'colorful 2D cartoon animation style, cute characters, vibrant, clean background',\n  privacy: 'private',                      // change to public after you trust the output\n  font: 'Noto Sans Devanagari',            // 'DejaVu Sans' for English\n};\n// ======================\nconst sd = $getWorkflowStaticData('global');\nconst past = (sd.titles || []).slice(-40).join('; ');\nconst prompt = `You write scripts for YouTube Shorts animation videos. Niche: ${cfg.niche}. Language: ${cfg.language}.\nInvent a fresh, original topic. Do NOT repeat these: ${past || 'none yet'}.\nMake a 25-40 second story: 6-8 scenes, strong hook in scene 1, satisfying ending.\nReturn JSON: {\"title\": str (max 80 chars, catchy, in ${cfg.language}), \"description\": str, \"tags\": [str],\n\"scenes\": [{\"narration\": str (1-2 short sentences in ${cfg.language}),\n\"image_prompt\": str (ENGLISH, one visual scene; repeat the same character description in every scene)}]}`;\nreturn [{ json: { cfg, body: { contents: [{ parts: [{ text: prompt }] }],\n  generationConfig: { responseMimeType: 'application/json', temperature: 1.0 } } } }];"
+      },
+      "id": "42944476-e030-48c0-9e63-5b597733eb65",
+      "name": "Config & Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "key",
+              "value": "={{ $env.GEMINI_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "f89ce99a-596f-4345-9be3-ea1a2b15b47a",
+      "name": "Gemini Script",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $('Config & Prompt').first().json.cfg;\nconst raw = $input.first().json.candidates[0].content.parts[0].text;\nconst script = JSON.parse(raw);\nconst sd = $getWorkflowStaticData('global');\nsd.titles = (sd.titles || []).concat(script.title);\n\nconst job = new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14) + '-' + Math.floor(Math.random() * 1000);\nconst dir = `/data/shorts/${job}`;\nconst W = 1080, H = 1920, FPS = 30;\n\nreturn script.scenes.map((sc, i) => {\n  const b64 = Buffer.from(sc.narration, 'utf8').toString('base64');\n  const imgUrl = 'https://image.pollinations.ai/prompt/' +\n    encodeURIComponent(sc.image_prompt + ', ' + cfg.style) +\n    `?width=${W}&height=${H}&nologo=true&seed=${Math.floor(Math.random() * 1e6)}`;\n  const zoom = i % 2 === 0 ? 'min(zoom+0.0015,1.3)' : 'if(eq(on,0),1.3,max(zoom-0.0015,1.0))';\n  const vf = `scale=${W*2}:${H*2}:force_original_aspect_ratio=increase,crop=${W*2}:${H*2},` +\n    `zoompan=z='${zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=$F:s=${W}x${H}:fps=${FPS},format=yuv420p`;\n  const cmd = `set -e\nmkdir -p ${dir}; cd ${dir}\necho '${b64}' | base64 -d > n${i}.txt\nedge-tts --voice ${cfg.voice} --file n${i}.txt --write-media a${i}.mp3\nfor t in 1 2 3 4 5; do curl -sfL -o i${i}.jpg \"${imgUrl}\" && break; sleep $((t*5)); done\ntest -s i${i}.jpg\nDUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 a${i}.mp3)\nT=$(awk \"BEGIN{print $DUR+0.25}\")\nF=$(awk \"BEGIN{print int(($DUR+0.25)*${FPS})+1}\")\nffmpeg -y -loglevel error -loop 1 -i i${i}.jpg -i a${i}.mp3 -vf \"${vf}\" -t $T -c:v libx264 -preset veryfast -c:a aac -ar 44100 -shortest c${i}.mp4\necho $T`;\n  return { json: { i, job, dir, cmd, narration: sc.narration, total: script.scenes.length,\n    title: script.title, description: script.description, tags: script.tags || [] } };\n});"
+      },
+      "id": "7f5b581c-3793-4a17-b045-572aede05973",
+      "name": "Parse Script",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "command": "={{ $json.cmd }}"
+      },
+      "id": "eff3a854-416d-4c41-8603-aa1a42b2fc3f",
+      "name": "Make Scene (voice+image+clip)",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        880,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "const scenes = $('Parse Script').all().map(x => x.json);\nconst durs = $input.all().map(x => parseFloat(String(x.json.stdout).trim().split('\\n').pop()));\nconst { dir, title, description, tags } = scenes[0];\nconst cfg = $('Config & Prompt').first().json.cfg;\nconst W = 1080, H = 1920;\nconst ts = t => { const h = Math.floor(t/3600), m = Math.floor(t%3600/60), s = t%60;\n  return `${h}:${String(m).padStart(2,'0')}:${s.toFixed(2).padStart(5,'0')}`; };\n\nlet ass = `[Script Info]\nScriptType: v4.00+\nPlayResX: ${W}\nPlayResY: ${H}\n\n[V4+ Styles]\nFormat: Name,Fontname,Fontsize,PrimaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\nStyle: Default,${cfg.font},78,&H00FFFFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,6,2,2,60,60,520,1\n\n[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n`;\nlet t = 0;\nscenes.forEach((sc, i) => {\n  const words = sc.narration.split(/\\s+/);\n  const chunks = [];\n  for (let k = 0; k < words.length; k += 4) chunks.push(words.slice(k, k + 4).join(' '));\n  const total = chunks.reduce((a, c) => a + c.length, 0) || 1;\n  let cs = t;\n  chunks.forEach(c => { const ce = cs + durs[i] * c.length / total;\n    ass += `Dialogue: 0,${ts(cs)},${ts(ce)},Default,,0,0,0,,${c}\\n`; cs = ce; });\n  t += durs[i];\n});\nconst list = scenes.map((_, i) => `file 'c${i}.mp4'`).join('\\n') + '\\n';\nconst b = s => Buffer.from(s, 'utf8').toString('base64');\nconst cmd = `set -e\ncd ${dir}\necho '${b(list)}' | base64 -d > list.txt\necho '${b(ass)}' | base64 -d > subs.ass\nffmpeg -y -loglevel error -f concat -safe 0 -i list.txt -c copy joined.mp4\nffmpeg -y -loglevel error -i joined.mp4 -vf ass=subs.ass -c:v libx264 -preset veryfast -c:a aac final.mp4\necho done`;\nreturn [{ json: { cmd, path: `${dir}/final.mp4`, title, description, tags: tags.join(','), privacy: cfg.privacy } }];"
+      },
+      "id": "0d34df8c-7195-40e5-9324-69d2a1ca853e",
+      "name": "Build Subtitles & Command",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "command": "={{ $json.cmd }}"
+      },
+      "id": "057fb020-193b-45f9-bb02-c9cc39b937fc",
+      "name": "Merge + Burn Captions",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "fileSelector": "={{ $('Build Subtitles & Command').first().json.path }}",
+        "options": {}
+      },
+      "id": "5e861fa2-d591-4b4a-a868-f69496fcd229",
+      "name": "Read final.mp4",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        1540,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "video",
+        "operation": "upload",
+        "title": "={{ $('Build Subtitles & Command').first().json.title }}",
+        "regionCode": "IN",
+        "categoryId": "24",
+        "binaryProperty": "data",
+        "options": {
+          "description": "={{ $('Build Subtitles & Command').first().json.description + '\\n\\n#Shorts #animation' }}",
+          "tags": "={{ $('Build Subtitles & Command').first().json.tags }}",
+          "privacyStatus": "={{ $('Build Subtitles & Command').first().json.privacy }}"
+        }
+      },
+      "id": "a03b70db-712b-4d94-83f0-7c350e6dccae",
+      "name": "Upload to YouTube",
+      "type": "n8n-nodes-base.youTube",
+      "typeVersion": 1,
+      "position": [
+        1760,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Every day 10AM": {
+      "main": [
+        [
+          {
+            "node": "Config & Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config & Prompt": {
+      "main": [
+        [
+          {
+            "node": "Gemini Script",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Script": {
+      "main": [
+        [
+          {
+            "node": "Parse Script",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Script": {
+      "main": [
+        [
+          {
+            "node": "Make Scene (voice+image+clip)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Make Scene (voice+image+clip)": {
+      "main": [
+        [
+          {
+            "node": "Build Subtitles & Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Subtitles & Command": {
+      "main": [
+        [
+          {
+            "node": "Merge + Burn Captions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge + Burn Captions": {
+      "main": [
+        [
+          {
+            "node": "Read final.mp4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read final.mp4": {
+      "main": [
+        [
+          {
+            "node": "Upload to YouTube",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}
